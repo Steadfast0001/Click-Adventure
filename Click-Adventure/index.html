@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CLICKER GAME</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Theme and PWA configs -->
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2196f3">
+
+  <!-- Android specific PWA settings -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="application-name" content="Clicker Game">
+  <link rel="icon" sizes="192x192" href="icons/icon-192.png">
+  <link rel="icon" sizes="512x512" href="icons/icon-512.png">
+
+  <!-- iOS fallback (optional, for cross-device support) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Clicker Game">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+</head>
+<body>
+  <!-- Sky clouds (more clouds for eye-catching effect) -->
+  <div class="sky-cloud" style="width:90px;height:38px;top:8vh;left:12vw;"></div>
+  <div class="sky-cloud" style="width:60px;height:24px;top:15vh;left:60vw;"></div>
+  <div class="sky-cloud" style="width:120px;height:48px;top:22vh;left:35vw;"></div>
+  <div class="sky-cloud" style="width:70px;height:30px;top:10vh;left:80vw;"></div>
+  <div class="sky-cloud" style="width:100px;height:40px;top:5vh;left:30vw;"></div>
+  <div class="sky-cloud" style="width:80px;height:32px;top:18vh;left:75vw;"></div>
+  <div class="sky-cloud" style="width:110px;height:44px;top:25vh;left:50vw;"></div>
+  <div class="sky-cloud" style="width:55px;height:22px;top:12vh;left:5vw;"></div>
+  <div class="sky-cloud" style="width:70px;height:28px;top:30vh;left:85vw;"></div>
+  <div class="sky-cloud" style="width:140px;height:60px;top:35vh;left:20vw;"></div>
+  <div class="sky-cloud" style="width:80px;height:32px;top:40vh;left:60vw;"></div>
+
+  <!-- Vegetated ground -->
+  <div class="grass"></div>
+
+  <div id="gameSelector" class="selector-screen">
+    <h1>Choose Your Game</h1>
+    <button class="selectorBtn" onclick="showClickerGame()">🎈 Balloon Clicker</button>
+    <button class="selectorBtn" onclick="showTypingGame()">⌨️ Typing Balloons</button>
+  </div>
+
+  <!-- Balloon Clicker Game -->
+  <div id="welcomeInstructions" style="display:none;">
+    <h1>Welcome to MULFRICA Intern Game By N steadfast B</h1>
+    <h2>📜 Game Instructions</h2>
+    <ul>
+      <li>🎈 Tap balloons of different colors to earn points. Each balloon has a rope!</li>
+      <li>➕ Positive numbers <b>add</b> to your score.</li>
+      <li>➖ Negative numbers <b>subtract</b> from your score.</li>
+      <li>🔴 Balloons <b>without a number</b>: <b>Game Over</b> if tapped!</li>
+      <li>🚀 If 100 positive balloons pass without being tapped → <b>Game Over</b>.</li>
+      <li>🌪️ Balloons burst with animation when tapped.</li>
+      <li>⚡ Difficulty increases each level: balloons move faster!</li>
+      <li>🏅 Your high score is saved!</li>
+      <li>🏆 Goal: Reach <b>10,000 points</b> to win!</li>
+    </ul>
+    <button id="startBtn" onclick="startGame()">Start Game</button>
+    <button class="backBtn" onclick="backToSelector()">⬅️ Back</button>
+  </div>
+
+  <div id="game" style="display:none;">
+    <div id="scoreBoard">Score: 0</div>
+    <div id="levelMeter">Level: 1</div>
+  </div>
+
+  <div id="gameOverScreen" style="display:none;">
+    <h2>GAME OVER</h2>
+    <p id="gameOverMsg"></p>
+    <button class="screenBtn" onclick="resetGame()">Play Again</button>
+    <button class="backBtn" onclick="backToSelector()">⬅️ Back</button>
+  </div>
+
+  <div id="winScreen" style="display:none;">
+    <h2>🏆 YOU WON! 🎉</h2>
+    <p>Congratulations! You reached 10,000 points!</p>
+    <button class="screenBtn" onclick="resetGame()">Play Again</button>
+    <button class="backBtn" onclick="backToSelector()">⬅️ Back</button>
+  </div>
+
+  <!-- Typing Balloons Game -->
+  <div id="typingInstructions" class="selector-screen" style="display:none;">
+    <h1>Typing Balloons</h1>
+    <h2>📝 Game Instructions</h2>
+    <ul>
+      <li>🎈 Type the word shown in each balloon to pop it and earn points.</li>
+      <li>⏱️ The faster you type, the more points you get!</li>
+      <li>💡 Words get harder as you level up: Beginner, Intermediate, Advanced.</li>
+      <li>❌ If a balloon reaches the top before you type the word, you lose a life.</li>
+      <li>🏅 Your high score is saved!</li>
+      <li>🏆 Goal: Pop as many balloons as you can!</li>
+    </ul>
+    <button id="startTypingBtn" onclick="startTypingGame()">Start Typing Game</button>
+    <button class="backBtn" onclick="backToSelector()">⬅️ Back</button>
+  </div>
+
+  <div id="typingGame" style="display:none;">
+    <div id="typingScoreBoard">Score: 0</div>
+    <div id="typingLevelMeter">Level: Beginner</div>
+    <div id="typingLives">Lives: 3</div>
+    <input id="typingInput" type="text" autocomplete="off" placeholder="Type the word here..." />
+    <div id="typingBalloonArea"></div>
+  </div>
+
+  <div id="typingGameOver" style="display:none;">
+    <h2>GAME OVER</h2>
+    <p id="typingGameOverMsg"></p>
+    <button class="screenBtn" onclick="resetTypingGame()">Play Again</button>
+    <button class="backBtn" onclick="backToSelector()">⬅️ Back</button>
+  </div>
+
+  <!-- Game sounds -->
+  <audio id="popSound" src="https://www.soundjay.com/button/sounds/button-16.mp3"></audio>
+  <audio id="bgMusic" src="https://www.soundhelix.com/examples/mp3/soundHelix-Song-1.mp3" loop></audio>
+  <audio id="btnSound" src="https://www.soundjay.com/button/sounds/button-3.mp3"></audio>
+
+  <!-- Game scripts -->
+  <script src="typinggame.js"></script>
+  <script src="game.js"></script>
+
+  <!-- Register Service Worker -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js")
+        .then(() => console.log("✅ Service Worker registered"))
+        .catch((err) => console.log("❌ SW registration failed:", err));
+    }
+  </script>
+</body>
+</html>
