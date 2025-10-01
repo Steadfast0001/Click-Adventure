@@ -1,0 +1,1062 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- CRITICAL: Ensure proper scaling and viewport settings for all devices -->
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>ClickAdventure</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+  <!-- Theme and PWA configs -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2196f3">
+  <!-- Android specific PWA settings -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="application-name" content="Clicker Game">
+  <link rel="icon" sizes="192x192" href="icons/icon-192.png">
+  <link rel="icon" sizes="512x512" href="icons/icon-512.png">
+
+  <!-- iOS fallback (optional, for cross-device support) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Clicker Game">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <!-- FIREBASE/FIRESTORE IMPORTS AND INITIALIZATION -->
+  <script type="module">
+    // FIX: Imported setLogLevel to enable debug logging
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, collection, query, getDocs, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    
+    // Global Firebase vars exposed to the main script context
+    window.firebaseApp = null;
+    window.db = null;
+    window.auth = null;
+    window.userId = null;
+    window.appId = null;
+    window.isAuthReady = false;
+
+    // Expose necessary Firestore functions globally for use in the main script block
+    window.firestore = { doc, setDoc, collection, query, getDocs, runTransaction };
+    
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            
+            if (Object.keys(firebaseConfig).length > 0) {
+                window.firebaseApp = initializeApp(firebaseConfig);
+                window.db = getFirestore(window.firebaseApp);
+                window.auth = getAuth(window.firebaseApp);
+                
+                // Mandatory: Set debug log level for better tracing
+                setLogLevel('debug'); 
+            } else {
+                console.error("Firebase config not found.");
+                return;
+            }
+
+            // Authentication setup using the provided Canvas token with failover
+            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+            
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(window.auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(window.auth);
+                }
+            } catch (authError) {
+                // FIX: If custom token sign-in fails (often due to transient network errors),
+                // log the warning and fall back to anonymous sign-in to ensure the app proceeds.
+                console.warn("Custom token sign-in failed, attempting anonymous sign-in as fallback:", authError);
+                try {
+                    await signInAnonymously(window.auth);
+                } catch (anonError) {
+                    console.error("Anonymous sign-in also failed, cannot proceed:", anonError);
+                    return; // Cannot proceed without authentication
+                }
+            }
+
+            onAuthStateChanged(window.auth, (user) => {
+                if (user) {
+                    window.userId = user.uid;
+                } else {
+                    window.userId = crypto.randomUUID(); // Fallback identifier
+                }
+                window.isAuthReady = true;
+                // Trigger initialization that depends on authentication readiness
+                if (window.initializeLeaderboard) {
+                    window.initializeLeaderboard();
+                }
+            });
+
+        } catch (e) {
+            console.error("Firebase initialization failed:", e);
+        }
+    });
+</script>
+
+
+  <style>
+    :root{
+      --accent: #1565c0;
+      --card-bg: rgba(255, 255, 255, 0.95);
+      --radius: 12px;
+      --btn-color: #2196f3;
+      --btn-hover: #1e88e5;
+    }
+
+    /* Base Styling */
+    html, body{ height:100%; }
+    body{
+      margin:0; font-family: 'Inter', system-ui, sans-serif;
+      color:#072238; overflow-x:hidden;
+      transition: background-color 0.5s ease;
+      background: #c0d1d3; /* Default fallback */
+    }
+
+    /* Layout: Use fluid widths and adaptive margins */
+    .center-wrap{ 
+        max-width:980px; 
+        margin:0 auto; /* Removed fixed margin-top to allow content to sit higher */
+        padding: clamp(12px, 3vw, 24px); /* Adaptive padding */
+    }
+
+    /* Screens & Card Styles */
+    .screen, .overlay-content{
+      background: var(--card-bg); border-radius:var(--radius); padding:24px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+      backdrop-filter: blur(5px);
+    }
+    .full-screen-overlay{
+      position:fixed; top:0; left:0; right:0; bottom:0; z-index:100;
+      display:flex; justify-content:center; align-items:center;
+      background:rgba(0,0,0,0.5);
+    }
+
+    /* Game Area and Backgrounds */
+    #gameBackground {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background-size: cover; background-position: center bottom;
+        transition: background-image 1s ease, background-color 1s ease;
+        z-index: -1;
+    }
+    #gameBackground.sky-day { background-image: linear-gradient(180deg, #87CEEB 0%, #AECF00 100%); }
+    #gameBackground.sky-sunset { background-image: linear-gradient(180deg, #F94848 0%, #FFB04C 70%, #000 100%); }
+    #gameBackground.sky-night { background-image: linear-gradient(180deg, #020720 0%, #0c2d61 80%, #1565c0 100%); }
+
+    #game, #typingGame{
+      position:relative; width:100%; min-height:400px; 
+      height:70vh; /* Use Viewport Height for fluid size */
+      max-height: 800px; 
+      margin:20px 0; overflow:hidden;
+      background: rgba(255, 255, 255, 0.4); /* Game board transparency */
+      border: 3px solid rgba(255, 255, 255, 0.8);
+      border-radius: var(--radius);
+      box-shadow: inset 0 0 20px rgba(0,0,0,0.1);
+      touch-action: none;
+    }
+
+    /* Balloons - Use clamp() for responsive sizing */
+    .balloon, .typing-balloon{
+      position:absolute; 
+      /* Dynamic sizing: Min 50px, Max 90px, scales with 12vw */
+      width: clamp(50px, 12vw, 90px); 
+      height: clamp(70px, 15vw, 110px); 
+      border-radius:50% 50% 50% 50% / 60% 60% 40% 40%;
+      display:flex; justify-content:center; align-items:center;
+      color:white; font-weight:900; 
+      font-size: clamp(12px, 3.5vw, 20px); /* Responsive font size */
+      user-select:none; touch-action: manipulation;
+      box-shadow: 0 6px 14px rgba(0,0,0,0.3);
+      transition: background 0.3s;
+      will-change: transform, top, left;
+    }
+    .balloon-rope, .typing-balloon-rope{
+        position:absolute; bottom:-12px; left:50%;
+        transform:translateX(-50%); width:2px; height:20px;
+        background:#555; border-radius:2px;
+    }
+
+    /* TYPING GAME BALLOON STYLES */
+    .typing-word {
+        font-size: clamp(12px, 3.5vw, 20px); /* Use same responsive font size */
+        font-weight: 900;
+        text-shadow: 0 0 3px rgba(0,0,0,0.5);
+        color: white;
+    }
+    .typing-balloon.beginner { background: radial-gradient(circle at 30% 30%, #4caf50, #8bc34a); } /* Green */
+    .typing-balloon.intermediate { background: radial-gradient(circle at 30% 30%, #ff9800, #ffc107); } /* Yellow/Orange */
+    .typing-balloon.advanced { background: radial-gradient(circle at 30% 30%, #f44336, #e91e63); } /* Red/Pink */
+    
+    /* Burst animation */
+    @keyframes burst {
+      0%   { transform: scale(1); opacity: 1; }
+      50%  { transform: scale(2); opacity: 0.8; }
+      100% { transform: scale(0); opacity: 0; }
+    }
+    .typing-balloon.burst, .balloon.burst {
+      animation: burst 0.2s forwards;
+      pointer-events: none;
+    }
+  </style>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div id="gameBackground" class="sky-day"></div>
+  <div class="center-wrap">
+    <header class="text-center mb-6 pt-4">
+      <h1 class="text-4xl sm:text-5xl font-extrabold text-blue-700 mt-2">🎈 ClickAdventure 🎈</h1>
+      <p class="text-base sm:text-lg text-gray-650">Welcome to MULFRICA Intern Game By N steadfast B!</p>
+    </header>
+
+    <section id="gameSelector" class="screen">
+      <h2 class="text-2xl font-bold mb-4 text-center">Choose Your Game</h2>
+      <!-- Buttons now use flex-wrap to stack on mobile -->
+      <div class="flex flex-wrap justify-center gap-4 mt-5">
+        <button id="startClickerBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-200 w-full sm:w-auto">Balloon Clicker</button>
+        <button id="showTypingInstructionsBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-200 w-full sm:w-auto">Typing Balloon Game</button>
+        <button id="showWelcomeBtn" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-200 w-full sm:w-auto">How to Play</button>
+      </div>
+      <div class="mt-8 p-4 bg-gray-50 rounded-xl shadow-inner">
+        <h3 class="text-xl font-semibold border-b pb-2 mb-3 text-gray-700">Top High Scores (Combined)</h3>
+        <ul id="leaderboardList" class="list-none p-0">
+          <li class="text-center py-2 text-gray-500">Loading scores...</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="welcomeInstructions" class="screen" style="display:none;">
+      <h2 class="text-2xl font-bold mb-4 text-center">Welcome!</h2>
+      <p class="text-center mb-4">Enter your player name to save your scores to the leaderboard.</p>
+      <input type="text" id="playerNameStart" placeholder="Enter your name" class="w-full max-w-sm mx-auto block p-3 text-lg border-2 border-blue-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+      <h3 class="text-xl font-semibold mt-6 mb-3 border-b pb-1">Balloon Clicker Rules</h3>
+      <ul class="list-disc list-inside space-y-2 text-gray-700">
+        <li>🎈 Tap balloons to earn points. Each balloon has a rope!</li>
+        <li>➕ **Positive (random color)** balloons show positive numbers that **add** to your score.</li>
+        <li>➖ **Negative (random color)** balloons show negative numbers that **subtract** from your score.</li>
+        <li>🔴 **Hazard (dark random color)** balloons are dangers: **Game Over** if tapped!</li>
+        <li>🚀 If **100 Positive balloons** pass without being tapped → **Game Over**.</li>
+        <li>⚡ Difficulty increases each level: balloons move faster!</li>
+        <li>🏅 Your high score is saved to the leaderboards!</li>
+        <li>🏆 **Goal:** Reach **10,000 points** to win!</li>
+      </ul>
+
+      <h3 class="text-xl font-semibold mt-6 mb-3 border-b pb-1">Typing Game Rules</h3>
+      <ul class="list-disc list-inside space-y-2 text-gray-700">
+        <li>🎈 Type the word shown in each balloon and it will **automatically pop** upon exact match.</li>
+        <li>⏱️ The faster you type, the more points you get!</li>
+        <li>💡 Words get harder as you level up: Beginner, Intermediate, Advanced.</li>
+        <li>❌ If a balloon reaches the **bottom** before you type the word, you lose a life.</li>
+        <li>🏅 Your high score is saved!</li>
+        <li>🏆 **Goal:** Pop as many balloons as you can!</li>
+      </ul>
+      <div class="flex justify-center gap-4 mt-6 flex-wrap">
+        <button id="startClickerFromWelcomeBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full shadow-lg">Start Clicker</button>
+        <button id="backFromWelcome" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-full shadow-lg">Back to Menu</button>
+      </div>
+    </section>
+
+    <section id="typingInstructions" class="screen" style="display:none;">
+      <h2 class="text-2xl font-bold mb-5 text-center">Typing Game Challenge</h2>
+      <p class="text-center mb-4">Select your starting typing difficulty:</p>
+      <div class="flex justify-center gap-3 flex-wrap">
+        <button class="level-btn bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto" data-level="beginner">Beginner (Short Words)</button>
+        <button class="level-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto" data-level="intermediate">Intermediate (Medium Words)</button>
+        <button class="level-btn bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto" data-level="advanced">Advanced (Long Words)</button>
+      </div>
+      <div class="flex justify-center mt-6">
+        <button id="backFromTypingInstructions" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-full shadow-lg">Back to Menu</button>
+      </div>
+    </section>
+
+    <section id="clickerGame" style="display:none;">
+      <!-- Added flex-wrap and gap-2 for responsiveness on small screens -->
+      <div class="flex justify-around p-3 mb-3 bg-white rounded-xl shadow-md font-semibold text-center flex-wrap gap-2">
+        <div class="min-w-[100px]">Score: <strong id="scoreBoard" class="text-blue-600 text-xl sm:text-2xl">0</strong></div>
+        <div class="min-w-[100px]">Level: <strong id="levelMeter" class="text-green-600 text-xl sm:text-2xl">1</strong></div>
+        <div class="min-w-[150px]">Missed Positive: <strong id="missedCount" class="text-red-600 text-xl sm:text-2xl">0/100</strong></div>
+      </div>
+      <div id="game">
+        </div>
+      <div class="flex justify-center gap-4 mt-4 flex-wrap">
+        <button id="pauseBtn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-5 rounded-full shadow-md w-full sm:w-auto">Pause</button>
+        <button id="quitBtn" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-5 rounded-full shadow-md w-full sm:w-auto">Quit</button>
+      </div>
+    </section>
+
+    <section id="typingGameScreen" style="display:none;">
+      <!-- Added flex-wrap and gap-2 for responsiveness on small screens -->
+      <div class="flex justify-around p-3 mb-3 bg-white rounded-xl shadow-md font-semibold text-center flex-wrap gap-2">
+        <div class="min-w-[100px]">Score: <strong id="typingScoreBoard" class="text-blue-600 text-xl sm:text-2xl">0</strong></div>
+        <div class="min-w-[120px]">Difficulty: <strong id="typingLevelMeter" class="text-green-600 text-xl sm:text-2xl">Beginner</strong></div>
+        <div class="min-w-[100px]">Lives: <strong id="typingLives" class="text-red-600 text-xl sm:text-2xl">3</strong></div>
+      </div>
+      <div id="typingGame">
+        </div>
+      <div class="flex flex-col items-center gap-2 mt-4">
+        <!-- Input field is full width on small screens, max-w-lg on large screens -->
+        <input type="text" id="typingInput" class="w-full max-w-lg p-3 text-xl border-2 border-indigo-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600 text-center" placeholder="Type the word here..." autofocus />
+        <div class="flex justify-center gap-4 w-full max-w-lg flex-wrap">
+          <button id="pauseTypingBtn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-5 rounded-full shadow-md w-full sm:w-auto">Pause</button>
+          <button id="quitTypingBtn" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-5 rounded-full shadow-md w-full sm:w-auto">Quit</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="gameOverScreen" class="full-screen-overlay" style="display:none;">
+      <div class="overlay-content bg-white p-8 rounded-xl max-w-sm w-11/12">
+        <h2 class="text-3xl font-bold text-red-600 mb-3">Game Over!</h2>
+        <p class="text-xl mb-4">Your final score was: <strong id="finalScore" class="text-4xl text-blue-600">0</strong></p>
+        <p class="mb-6 text-gray-600">Keep practicing to beat your high score!</p>
+        <div class="flex justify-center gap-4 flex-wrap">
+          <button id="playAgainBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto">Play Again</button>
+          <button id="backAfterLose" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto">Back to Menu</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="winScreen" class="full-screen-overlay" style="display:none;">
+      <div class="overlay-content bg-white p-8 rounded-xl max-w-md w-11/12">
+        <h2 class="text-3xl font-bold text-green-600 mb-3">🎉 You Reached 10,000 Points! 🎉</h2>
+        <p class="text-xl mb-4">You are a Balloon Master! Final Score: <strong id="finalWinScore" class="text-4xl text-blue-600">0</strong></p>
+        <div class="flex justify-center gap-4 flex-wrap">
+          <button id="playAgainWin" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto">Play Again</button>
+          <button id="backAfterWin" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto">Back to Menu</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="typingGameOver" class="full-screen-overlay" style="display:none;">
+      <div class="overlay-content bg-white p-8 rounded-xl max-w-md w-11/12">
+        <h2 class="text-3xl font-bold text-red-600 mb-3">Typing Game Over!</h2>
+        <p class="text-xl mb-4">You ran out of lives. Your score was: <strong id="finalTypingScore" class="text-4xl text-blue-600">0</strong></p>
+        <div class="flex justify-center gap-4 flex-wrap">
+          <button id="resetTypingBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto">Try Again</button>
+          <button id="backFromTypingLose" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-full shadow-lg w-full sm:w-auto">Back to Menu</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script>
+    
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js")
+        .then(() => console.log("✅ Service Worker registered"))
+        .catch((err) => console.log("❌ SW registration failed:", err));
+    }
+
+  // Helper functions
+  const $ = id => document.getElementById(id);
+  const hideElement = el => el && (el.style.display = 'none');
+  const showElement = el => el && (el.style.display = 'block');
+  const getPlayer = () => $('playerNameStart').value.trim() || localStorage.getItem('player_name') || 'Anonymous Player';
+  const savePlayerName = (name) => { if (name && name !== 'Anonymous Player') localStorage.setItem('player_name', name); };
+  
+  // --- Game Color Function ---
+  /**
+   * Generates a random HSL radial gradient for vibrant, dynamic balloon colors.
+   * @param {string} type - 'positive', 'negative', or 'hazard'.
+   * @returns {string} CSS radial-gradient value.
+   */
+  function getRandomGradient(type) {
+      const h = Math.floor(Math.random() * 360); // Random Hue (0-359)
+      
+      if (type === 'hazard') {
+          // Darker, less saturated colors for hazards
+          const s = Math.floor(Math.random() * 30) + 30; // 30-60% saturation
+          const l1 = Math.floor(Math.random() * 10) + 20; // 20-30% lightness
+          const l2 = Math.floor(Math.random() * 10) + 10; // 10-20% lightness
+          return `radial-gradient(circle at 30% 30%, hsl(${h}, ${s}%, ${l1}%), hsl(${h}, ${s}%, ${l2}%))`;
+      }
+      
+      // Vibrant colors for positive/negative
+      const s = Math.floor(Math.random() * 20) + 70; // 70-90% saturation
+      const l1 = Math.floor(Math.random() * 20) + 60; // 60-80% lightness
+      const l2 = Math.floor(Math.random() * 20) + 40; // 40-60% lightness (for depth)
+      
+      return `radial-gradient(circle at 30% 30%, hsl(${h}, ${s}%, ${l1}%), hsl(${h}, ${s}%, ${l2}%))`;
+  }
+
+
+  // --- Start of game.js code ---
+  (function() {
+    // --- Firestore setup (now relying on variables exposed from the module script) ---
+    const LEADERBOARD_TABLE = 'leaderboard';
+    const WIN_SCORE_CLICKER = 10000; // Define win score for clicker game
+
+    // --- Audio setup ---
+    let buttonSynth, burstSynth;
+    async function initAudio() {
+      if (Tone.context.state !== 'running') await Tone.start();
+      buttonSynth = new Tone.Synth({ oscillator:{type:'square'}, envelope:{attack:.005,decay:.1,sustain:0,release:.1} }).toDestination();
+      burstSynth = new Tone.NoiseSynth({ noise:{type:'pink'}, envelope:{attack:.001,decay:.2,sustain:0,release:.1} }).toDestination();
+    }
+    function playButtonSound(){ initAudio(); try{ buttonSynth?.triggerAttackRelease('C5','8n'); }catch(e){} }
+    function playBurstSound(){ initAudio(); try{ burstSynth?.triggerAttackRelease('0.2'); }catch(e){} }
+
+    // --- Background Management ---
+    const backgrounds = ['sky-day', 'sky-sunset', 'sky-night'];
+    const backgroundEl = $('gameBackground');
+
+    function updateBackground(indexOrName) {
+        if (!backgroundEl) return;
+        backgrounds.forEach(bg => backgroundEl.classList.remove(bg));
+        let bgClass;
+        if (typeof indexOrName === 'number') {
+            bgClass = backgrounds[indexOrName % backgrounds.length];
+        } else if (typeof indexOrName === 'string') {
+            if (indexOrName === 'beginner') bgClass = 'sky-day';
+            else if (indexOrName === 'intermediate') bgClass = 'sky-sunset';
+            else if (indexOrName === 'advanced') bgClass = 'sky-night';
+            else bgClass = indexOrName;
+        } else {
+            bgClass = backgrounds[0];
+        }
+        backgroundEl.classList.add(bgClass);
+    }
+
+    // --- Leaderboard Functions (Refactored for Firestore) ---
+    async function updateLeaderboard() {
+      if (!window.isAuthReady || !window.db || !window.appId || !window.firestore) {
+        return; // Wait for Firebase Auth to be ready
+      }
+      
+      const listEl = $('leaderboardList');
+      if (!listEl) return;
+
+      try {
+        const leaderboardRef = window.firestore.collection(window.db, `artifacts/${window.appId}/public/data/${LEADERBOARD_TABLE}`);
+        const snapshot = await window.firestore.getDocs(leaderboardRef);
+        
+        let data = [];
+        snapshot.forEach(doc => {
+            const item = doc.data();
+            // Ensure score is a number and valid for sorting
+            if (typeof item.score === 'number' && item.score > 0) {
+                data.push(item);
+            }
+        });
+        
+        // Sort in memory by score descending (to avoid Firestore index errors)
+        data.sort((a, b) => b.score - a.score);
+        data = data.slice(0, 10); // Limit to top 10
+
+        listEl.innerHTML = data.map((item, index) =>
+          `<li class="flex justify-between py-2 border-b border-gray-200 last:border-b-0 text-sm sm:text-base">
+              <span class="font-bold text-blue-500 w-8">${index + 1}.</span> 
+              <span class="flex-1 text-gray-800 truncate">${item.player_name || 'Anonymous'}</span> 
+              <span class="font-extrabold text-blue-700">${item.score}</span>
+          </li>`
+        ).join('');
+
+      } catch (err) {
+        console.error('Leaderboard fetch error (Firestore):', err);
+        listEl.innerHTML = '<li class="text-center text-red-500 py-2">Error loading scores.</li>';
+      }
+    }
+
+    async function submitBestScore(newScore) {
+      if (!window.isAuthReady || !window.db || !window.appId || !window.firestore) {
+        console.warn('Firestore not ready for score submission.');
+        return;
+      }
+      if (newScore <= 0) return;
+      
+      const player = getPlayer();
+      // Use player name as the document ID, sanitized to meet Firestore requirements
+      const docId = player.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() || window.userId;
+
+      const scoreDocRef = window.firestore.doc(window.db, `artifacts/${window.appId}/public/data/${LEADERBOARD_TABLE}`, docId);
+
+      try {
+        await window.firestore.runTransaction(window.db, async (transaction) => {
+            const docSnapshot = await transaction.get(scoreDocRef);
+            let currentScore = docSnapshot.exists() ? docSnapshot.data().score || 0 : 0;
+            
+            // Only update if the new score is better
+            if (newScore > currentScore) {
+                transaction.set(scoreDocRef, {
+                    player_name: player,
+                    score: newScore,
+                    timestamp: Date.now()
+                });
+            }
+        });
+      } catch (err) { 
+          console.error('Score transaction failed (Firestore):', err); 
+      }
+      updateLeaderboard();
+    }
+    
+    // Function exposed globally for the module script to call once authenticated
+    window.initializeLeaderboard = function() {
+        updateLeaderboard();
+        // Set up interval for refreshing leaderboard reads
+        setInterval(() => { updateLeaderboard(); }, 15000); 
+    };
+
+    // --- Clicker Game ---
+    const scoreBoard = $('scoreBoard');
+    const levelMeter = $('levelMeter');
+    const missedCount = $('missedCount');
+    const gameArea = $('game');
+
+    let score = 0, gameInterval = null, spawnSpeed = 2000;
+    let isGameOver = false, missedPositive = 0, level = 1;
+    let positiveMissLimit = 100, balloonSpeedBase = 2, balloonSpeedIncrement = 0.05;
+    let isPaused = false;
+
+    function updateClickerScore(points) {
+      score += points;
+      if (score < 0) score = 0;
+      scoreBoard.textContent = score;
+      checkLevelUp();
+
+      if (score >= WIN_SCORE_CLICKER && !isGameOver) {
+        winGame();
+      }
+    }
+
+    function updateMissed(isMiss) {
+      // Logic for Missed Positive Balloons: Only count misses if it's a positive balloon
+      if (isMiss) {
+        missedPositive++;
+        missedCount.textContent = `${missedPositive}/${positiveMissLimit}`;
+        if (missedPositive >= positiveMissLimit) {
+          gameOver();
+        }
+      }
+    }
+
+    function checkLevelUp() {
+      // Level increases every 500 points
+      const newLevel = Math.floor(score / 500) + 1;
+      if (newLevel > level) {
+        level = newLevel;
+        updateLevel();
+      }
+    }
+
+    function updateLevel() {
+      levelMeter.textContent = level;
+      spawnSpeed = Math.max(500, 2000 - (level - 1) * 300);
+      balloonSpeedBase = 2 + (level - 1) * balloonSpeedIncrement;
+      updateBackground(level);
+      if (!isPaused && !isGameOver) {
+        if (gameInterval) clearInterval(gameInterval);
+        gameInterval = setInterval(spawnBalloon, spawnSpeed);
+      }
+    }
+
+    function createBalloonMarkup(text, isPositive, isHazard = false) {
+      const b = document.createElement('div');
+      b.className = 'balloon';
+      
+      b.dataset.isPositive = isPositive;
+      b.dataset.isHazard = isHazard;
+      // Add a flag to track if the balloon has been clicked/burst
+      b.dataset.clicked = 'false'; 
+      
+      // Set the random color/gradient
+      let colorType = isHazard ? 'hazard' : (isPositive ? 'positive' : 'negative');
+      b.style.background = getRandomGradient(colorType);
+      
+      // Position calculation is already responsive using %
+      b.style.left = `${Math.random() * 90 + 5}%`;
+      b.style.bottom = '-100px';
+
+      const span = document.createElement('span');
+      span.innerText = text;
+      // Ensure text is white for visibility over the dynamic colors
+      span.style.color = isHazard ? 'transparent' : 'white'; 
+
+      const rope = document.createElement('div');
+      rope.className = 'balloon-rope';
+
+      b.appendChild(span);
+      b.appendChild(rope);
+
+      b.addEventListener('click', (e) => handleBalloonClick(e.currentTarget, isPositive));
+      return b;
+    }
+
+    function spawnBalloon() {
+      if (isGameOver || isPaused) return;
+
+      const type = Math.random();
+      let text, isPositive;
+      let points;
+      let isHazard = false;
+
+      // Define balloon type and content
+      if (type < 0.70) {
+        // Positive
+        text = '+' + Math.floor(Math.random() * 91 + 10);
+        points = parseInt(text);
+        isPositive = true;
+      } else if (type < 0.90) {
+        // Negative
+        const negPoints = Math.floor(Math.random() * 91 + 10) * -1;
+        text = '' + negPoints;
+        points = negPoints;
+        isPositive = false;
+      } else {
+        // Hazard
+        text = ' ';
+        points = 0;
+        isPositive = false;
+        isHazard = true;
+      }
+
+      const balloon = createBalloonMarkup(text, isPositive, isHazard); 
+      balloon.dataset.points = points;
+      gameArea.appendChild(balloon);
+
+      let bottomPos = -100;
+      const speed = balloonSpeedBase + Math.random() * 0.5;
+
+      function moveBalloon() {
+        // Stop movement updates and miss check if the balloon has been clicked
+        if (isPaused || isGameOver || balloon.dataset.clicked === 'true') { 
+            // If paused or game over, keep requesting frames to resume/cleanup later
+            if (isPaused || isGameOver) requestAnimationFrame(moveBalloon);
+            return;
+        }
+        
+        bottomPos += speed;
+        balloon.style.bottom = `${bottomPos}px`;
+        
+        // CHECK FOR MISS: Only positive balloons count as misses when they escape
+        if (bottomPos > gameArea.offsetHeight) {
+          // Check if it was a positive balloon and it was NOT clicked
+          if (isPositive && balloon.dataset.clicked === 'false') { updateMissed(true); } 
+          balloon.remove();
+        } else {
+          requestAnimationFrame(moveBalloon);
+        }
+      }
+      requestAnimationFrame(moveBalloon);
+    }
+
+    function handleBalloonClick(balloon, isPositive) {
+      if (isPaused || isGameOver) return;
+      
+      // Set clicked flag immediately upon click to prevent simultaneous 'miss' and 'click' events
+      balloon.dataset.clicked = 'true';
+
+      // If hazard balloon is clicked, game over
+      if (balloon.dataset.isHazard === 'true') {
+        playBurstSound();
+        balloon.classList.add('burst');
+        gameOver();
+        setTimeout(() => balloon.remove(), 250);
+        return;
+      }
+      
+      // Handle score update for positive and negative balloons
+      playBurstSound();
+      const points = parseInt(balloon.dataset.points) || 0;
+      updateClickerScore(points);
+      balloon.classList.add('burst');
+      setTimeout(() => balloon.remove(), 250);
+    }
+
+    function startClickerGame() {
+      playButtonSound();
+      savePlayerName(getPlayer());
+      hideAllScreens();
+      showElement($('clickerGame'));
+      if (gameInterval) clearInterval(gameInterval);
+      gameArea.innerHTML = '';
+      score = 0;
+      level = 1;
+      missedPositive = 0;
+      isGameOver = false;
+      isPaused = false;
+      scoreBoard.textContent = score;
+      missedCount.textContent = `${missedPositive}/${positiveMissLimit}`;
+      updateLevel();
+    }
+
+    function gameOver() {
+      if (isGameOver) return;
+      isGameOver = true;
+      if (gameInterval) clearInterval(gameInterval);
+      submitBestScore(score);
+      $('finalScore').textContent = score;
+      showElement($('gameOverScreen'));
+      updateBackground('sky-day');
+    }
+
+    function winGame() {
+      if (isGameOver) return;
+      isGameOver = true;
+      if (gameInterval) clearInterval(gameInterval);
+      submitBestScore(score);
+      $('finalWinScore').textContent = score;
+      showElement($('winScreen'));
+      updateBackground('sky-day');
+    }
+
+    function togglePause(btn) {
+      playButtonSound();
+      isPaused = !isPaused;
+      btn.textContent = isPaused ? 'Resume' : 'Pause';
+      if (!isPaused && !isGameOver) {
+        if (gameInterval) clearInterval(gameInterval);
+        gameInterval = setInterval(spawnBalloon, spawnSpeed);
+      } else {
+        if (gameInterval) clearInterval(gameInterval);
+      }
+    }
+
+    function quitGame() {
+      playButtonSound();
+      if (gameInterval) clearInterval(gameInterval);
+      isGameOver = true;
+      hideAllScreens();
+      showElement($('gameSelector'));
+      updateBackground('sky-day');
+    }
+
+    // --- Typing Game ---
+    const typingGameArea = $('typingGame');
+    const typingInput = $('typingInput');
+    const typingScoreBoard = $('typingScoreBoard');
+    const typingLivesEl = $('typingLives');
+    const typingLevelMeter = $('typingLevelMeter');
+
+    const beginnerWords = [
+      "act","and","are","arm","ask","bad","bag","bee","big","boy","but","buy","can","car","cat","cow",
+      "cry","cup","cut","dad","day","did","dog","dry","eat","egg","end","eye","fan","far","few","fix","for","fun","gas","get","had",
+      "has","hat","her","him","his","how","ice","ink","key","man","may","mom","now","odd","old","one","out","own","pet","pie","pin","pot",
+      "put","red","run","saw","see","she","sit","sun","the","too","toy","two","use","van","was","wet","why","win","you","yes","zip","also",
+      "aqua","area","away","baby","back","ball","bank","bean","bear","been","best","blue","boat","book","both","cake","call","care","city",
+      "cold","come","cook","cool","dark","desk","door","down","each","east","even","ever","exit","face","fact","fair","feel","feet","fire",
+      "five","food","four","from","game","gave","girl","give","gold","good","gone","half","hand","hard","have","head","help","here","hide",
+      "high","hold","home","hope","hour","idea","into","iron","item","jobs","join","jump","just","keep","kind","king","know","lace","lake","land","last","late","lead","leaf","life","like","line","live","load","long","look","lost","love","made","main","make",
+      "many","mask","meet","much","must","name","near","need","next","nice","nine","nose","note","once","only","open","over","page",
+      "pain","pair","part","past","path","play","post","pull","push","quiz","rain","read","real","rest","rice","ride","road","rock","rose","said","safe","sale","same","sand","save","seal","seat","seed","seem","self","sell","send","sent","show",
+      "shut","side","sigh","sign","sing","size","skin","sky","slow","snow","soap","soft","sold","some","song","soon","sore","sort","star","stay","step","stop","such","sure","take","talk","tall","tape","task","team","tell","tend","tent","term","that","them","then","they","thin","this","tidy","time","tire","told","tone",
+      "took","town","toys","tree","true","try","tune","turn","ugly","unit","upon","used","user","very",
+      "view","vote","wait","walk","wall","want","warm","wash","wave","weak","wear","week","well","went","were","west","what","when","will","wind","wise","wish","with","work","your","zero","zone","zoom","zest"
+    ];
+    const intermediateWords = [
+      "about","above","begin","dream","force","heart","house","light","money","world","border","camera","damage","design","father",
+      "friend","listen","mother","school","travel","journey", "message", "package", "station"
+    ];
+    const advancedWords = [
+      "keyboard", "monitor", "window", "garden", "bottle", "orange", "purple", "yellow", "school", "family",
+      "pencil", "rocket", "planet", "river", "mountain", "forest", "camera", "ticket", "market", "pillow",
+      "library", "picture", "holiday", "battery", "blanket", "diamond","javascript", "development", "application", "performance", "technology", "environment", "sophisticated", "congratulations", "responsibility", "communication",
+      "architecture", "algorithm", "sustainability", "entrepreneurship", "optimization", "synchronization", "implementation", "configuration", "documentation", "transformation",
+      "phenomenon", "accommodation", "recommendation", "circumstance", "opportunity", "consequence", "appreciation", "determination", "organization", "presentation"
+    ];
+
+    const typingWords = { beginner: beginnerWords, intermediate: intermediateWords, advanced: advancedWords };
+    
+    // Determine word difficulty based on score
+    function getCurrentWordDifficulty(score) {
+        if (score >= 3000) return 'advanced';
+        if (score >= 1000) return 'intermediate';
+        return 'beginner';
+    }
+
+    let typingScore = 0;
+    let typingLevel = "beginner"; // Stores the initial selection
+    let typingLives = 3; // Resetting lives to the UI default
+    let typingIsPaused = false;
+    let typingGameOverState = false;
+    let activeTypingBalloons = [];
+    let nextBalloonId = 0;
+
+    let baseBalloonSpeed = 0.5;
+    let spawnTypingBalloonInterval = 2000;
+    let lastSpawnTime = 0;
+    let lastFrameTime = 0;
+    let animationFrameId = null;
+
+    class TypingBalloon {
+        constructor(word, speed, levelClass) {
+            this.id = nextBalloonId++;
+            this.word = word;
+            this.speed = speed; 
+            this.top = -100; // Start at the top for top-to-bottom movement
+            this.left = Math.random() * (typingGameArea.clientWidth - 70);
+            this.isPopped = false;
+            this.levelClass = levelClass;
+            this.spawnTime = performance.now();
+
+            this.el = document.createElement('div');
+            this.el.className = `typing-balloon ${levelClass}`;
+            // Correct the left positioning for responsive balloon size
+            // We use clientWidth - 70px (approx max balloon width) but the CSS clamp is dynamic.
+            // Using a percentage based position is safer, just adjust the initial left calculation.
+            this.el.style.left = `${Math.random() * 90 + 5}%`; // Use % for better initial placement
+            this.el.style.top = `${this.top}px`; // Use top property
+            this.el.style.bottom = 'auto'; // Disable bottom property
+
+            const span = document.createElement('span'); span.innerText = word;
+            span.className = 'typing-word';
+            const rope = document.createElement('div'); rope.className = 'typing-balloon-rope';
+            // Reposition rope for top-to-bottom flow (assuming standard balloon shape is still okay)
+            rope.style.bottom = 'auto';
+            rope.style.top = '90px'; 
+            rope.style.height = '20px';
+
+            this.el.appendChild(span); this.el.appendChild(rope);
+
+            typingGameArea.appendChild(this.el);
+            activeTypingBalloons.push(this);
+        }
+
+        updatePosition(deltaTime) {
+            if (this.isPopped || typingIsPaused) return true;
+
+            // Movement is top-to-bottom, so 'top' increases
+            this.top += this.speed * deltaTime * 0.03; 
+
+            this.el.style.top = `${this.top}px`;
+
+            // Check for miss when the bottom of the balloon reaches the bottom of the game area
+            if (this.top + this.el.offsetHeight > typingGameArea.offsetHeight) {
+                this.miss();
+                return false;
+            }
+            return true;
+        }
+
+        burst() {
+            if (this.isPopped) return;
+            this.isPopped = true;
+            playBurstSound();
+
+            const popTime = performance.now();
+            const timeTakenMs = popTime - this.spawnTime;
+            // NEW SCORE LOGIC: length of word * 2
+            let baseScore = this.word.length * 2; 
+            const maxPopTime = 5000;
+            let bonusFactor = 1;
+            if (timeTakenMs < maxPopTime) {
+                // Adjusting bonus factor to be less aggressive for smaller base score
+                bonusFactor = 1 + (1 - (timeTakenMs / maxPopTime)); 
+            }
+            const points = Math.max(1, Math.round(baseScore * bonusFactor));
+            typingScore += points;
+            typingScoreBoard.textContent = typingScore;
+
+            const difficultyFactor = Math.floor(typingScore / 50);
+            spawnTypingBalloonInterval = Math.max(500, 2000 - difficultyFactor * 100);
+            baseBalloonSpeed = 0.5 + difficultyFactor * 0.1;
+
+            this.el.classList.add('burst');
+            setTimeout(() => this.el.remove(), 200);
+        }
+
+        miss() {
+            if (this.isPopped) return;
+            this.isPopped = true;
+            typingLives--;
+            typingLivesEl.textContent = typingLives;
+            this.el.style.opacity = '0.3';
+            setTimeout(() => this.el.remove(), 500);
+            if (typingLives <= 0) {
+                typingGameOver();
+            }
+        }
+    }
+
+    function spawnTypingBalloon() {
+      if (typingGameOverState || typingIsPaused) return;
+
+      const currentDifficulty = getCurrentWordDifficulty(typingScore);
+      const displayLevel = currentDifficulty.charAt(0).toUpperCase() + currentDifficulty.slice(1);
+      typingLevelMeter.textContent = displayLevel;
+      updateBackground(currentDifficulty);
+
+      const words = typingWords[currentDifficulty];
+      const word = words[Math.floor(Math.random() * words.length)];
+      const speed = baseBalloonSpeed + (Math.random() * 0.5);
+      new TypingBalloon(word, speed, currentDifficulty);
+    }
+
+    function typingGameLoop(currentTime) {
+      if (typingGameOverState) return;
+
+      const deltaTime = currentTime - lastFrameTime;
+      lastFrameTime = currentTime;
+
+      if (!typingIsPaused) {
+        activeTypingBalloons = activeTypingBalloons.filter(b => b.updatePosition(deltaTime));
+        if (currentTime - lastSpawnTime > spawnTypingBalloonInterval) {
+          spawnTypingBalloon();
+          lastSpawnTime = currentTime;
+        }
+      }
+      animationFrameId = requestAnimationFrame(typingGameLoop);
+    }
+
+    function startTypingGame(level = typingLevel) {
+      playButtonSound();
+      savePlayerName(getPlayer());
+
+      hideAllScreens();
+      showElement($('typingGameScreen'));
+      typingInput.value = '';
+      typingInput.focus();
+
+      typingLevel = level;
+      typingScore = 0;
+      typingLives = 3;
+      typingGameOverState = false;
+      typingIsPaused = false;
+
+      typingGameArea.innerHTML = '';
+      activeTypingBalloons = [];
+      nextBalloonId = 0;
+
+      baseBalloonSpeed = 0.5;
+      spawnTypingBalloonInterval = 2000;
+
+      typingScoreBoard.textContent = typingScore;
+      typingLivesEl.textContent = typingLives;
+
+      const initialDifficulty = typingLevel.charAt(0).toUpperCase() + typingLevel.slice(1);
+      typingLevelMeter.textContent = initialDifficulty;
+      updateBackground(typingLevel);
+
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      lastFrameTime = performance.now();
+      lastSpawnTime = lastFrameTime;
+      typingGameLoop(lastFrameTime);
+      spawnTypingBalloon();
+    }
+
+    // UPDATED: Typing input handler to automatically pop on exact match 
+    function handleKeyInput(event) {
+      if (typingGameOverState || typingIsPaused) return;
+      
+      const typedWord = typingInput.value.trim().toLowerCase();
+      
+      if (typedWord === '') return; 
+
+      // Find the first balloon whose word exactly matches the typed input
+      const match = activeTypingBalloons.find(b => b.word.toLowerCase() === typedWord);
+      
+      if (match) {
+        match.burst();
+        // Remove the burst balloon from the active list
+        activeTypingBalloons = activeTypingBalloons.filter(b => b.id !== match.id);
+        typingInput.value = ''; // Clear input on successful pop
+      }
+    }
+
+    function toggleTypingPause(btn) {
+      playButtonSound();
+      typingIsPaused = !typingIsPaused;
+      btn.textContent = typingIsPaused ? 'Resume' : 'Pause';
+      if (!typingIsPaused && !typingGameOverState) {
+        lastFrameTime = performance.now();
+        typingGameLoop(lastFrameFrame);
+      } else {
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      }
+    }
+
+    function typingGameOver() {
+      if (typingGameOverState) return;
+      typingGameOverState = true;
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      typingGameArea.innerHTML = '';
+      submitBestScore(typingScore);
+      $('finalTypingScore').textContent = typingScore;
+      showElement($('typingGameOver'));
+      updateBackground('sky-day');
+    }
+
+    function quitTypingGame() {
+      playButtonSound();
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      typingGameOverState = true;
+      hideAllScreens();
+      showElement($('gameSelector'));
+      updateBackground('sky-day');
+    }
+
+    // --- UI Event Handlers ---
+    function hideAllScreens() {
+      ['gameSelector', 'welcomeInstructions', 'clickerGame', 'gameOverScreen', 'winScreen', 'typingInstructions', 'typingGameScreen', 'typingGameOver'].forEach(id => hideElement($(id)));
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // Prefill player name
+      const saved = localStorage.getItem('player_name') || '';
+      if (saved) $('playerNameStart').value = saved;
+
+      // If Firebase auth finished before this script ran, initialize now
+      if (window.isAuthReady) {
+        window.initializeLeaderboard();
+      }
+
+      // Audio init
+      document.body.addEventListener('click', initAudio, { once: true });
+      document.body.addEventListener('keyup', initAudio, { once: true });
+
+      // Buttons
+      $('startClickerBtn').addEventListener('click', startClickerGame);
+      $('startClickerFromWelcomeBtn').addEventListener('click', startClickerGame);
+      $('playAgainBtn').addEventListener('click', startClickerGame);
+      $('playAgainWin').addEventListener('click', startClickerGame);
+      $('pauseBtn').addEventListener('click', (e) => togglePause(e.currentTarget));
+      $('quitBtn').addEventListener('click', quitGame);
+
+      $('showTypingInstructionsBtn').addEventListener('click', () => {
+        playButtonSound();
+        hideAllScreens();
+        showElement($('typingInstructions'));
+        updateBackground('sky-day');
+      });
+      document.querySelectorAll('.level-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => startTypingGame(e.target.dataset.level));
+      });
+      $('resetTypingBtn').addEventListener('click', () => startTypingGame(typingLevel));
+      $('pauseTypingBtn').addEventListener('click', (e) => toggleTypingPause(e.currentTarget));
+      $('quitTypingBtn').addEventListener('click', quitTypingGame);
+      
+      // Bind the new, simpler typing handler to the input box's keyup event
+      typingInput.addEventListener('keyup', handleKeyInput);
+      
+      // Navigation buttons
+      $('showWelcomeBtn').addEventListener('click', () => { playButtonSound(); hideAllScreens(); showElement($('welcomeInstructions')); });
+      $('backFromWelcome').addEventListener('click', () => { playButtonSound(); hideAllScreens(); showElement($('gameSelector')); });
+      $('backFromTypingInstructions').addEventListener('click', () => { playButtonSound(); hideAllScreens(); showElement($('gameSelector')); });
+      $('backAfterLose').addEventListener('click', () => { playButtonSound(); hideAllScreens(); showElement($('gameSelector')); });
+      $('backAfterWin').addEventListener('click', () => { playButtonSound(); hideAllScreens(); showElement($('gameSelector')); });
+      $('backFromTypingLose').addEventListener('click', () => { playButtonSound(); hideAllScreens(); showElement($('gameSelector')); });
+
+      // Save player name
+      $('playerNameStart').addEventListener('change', (e) => {
+        savePlayerName(e.target.value.trim());
+      });
+    });
+  })();
+  
+</script>
+</body>
+</html>
