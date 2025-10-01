@@ -1,6 +1,7 @@
 {
   "name": "Clicker Game",
-  "short_name": "Clicker",
+  "short_name": "ClickAdventure",
+  "id": "/",
   "description": "🎈 A fun balloon popping and typing adventure game!",
   "start_url": "/index.html",
   "display": "standalone",
